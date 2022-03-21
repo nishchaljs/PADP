@@ -1,168 +1,101 @@
-#include<math.h>
-#include<string.h>
+#include<stdio.h>
+#include<stdlib.h>
 #include<omp.h>
-#include<iostream>
-using namespace std;
-double t = 0.0;
-inline long Strike( bool composite[], long i,long stride, long limit )
+#include<math.h>
+int min(int a, int b)
 {
-   for( ; i<=limit; i+=stride )
-      composite[i] = true;
-   return i;
+	return a<b?a:b;
+}
+int strike(int* comp,int start, int stride, int limit){
+	for(start; start<=limit; start+=stride)
+		comp[start] = 1;
+	return start;
+}
+void unfriend(int n){
+	int m = sqrt(n);
+	int i=0, count=0;
+	int* comp = (int*)malloc(sizeof(int)*(n+1));
+	for(i=0; i<n+1; i++)
+		comp[i] = 0;
+	double t1 = omp_get_wtime();
+	for(i=2; i<=m; i++)
+		if(!comp[i]){
+			count++;
+			strike(comp,2*i,i,n);
+		}
+	for(i=m+1; i<=n; i++)
+		if(!comp[i])
+			count++;
+	double t2 = omp_get_wtime() - t1;
+	printf("Type: Unfriendly  N: %d  Prime: %d  Time: %g\n",n,count,t2);
 }
 
-long CacheUnfriendlySieve( long n )
-{
-   long count = 0;
-   long m = (long)sqrt((double)n);
-   bool* composite = new bool[n+1];
-   memset( composite, 0, n );
-   t = omp_get_wtime();
-   for( long i=2; i<=m; ++i )
-      if( !composite[i] )
-      {
-         ++count;
-         // Strike walks array of size n here.
-         Strike( composite, 2*i, i, n );
-      }
-   for( long i=m+1; i<=n; ++i )
-      if( !composite[i] )
-         ++count;
+void friend(int n){
+       int m = sqrt(n);
+       int i=0, count=0, nfac=0;
+       int striker[m], factor[m];
+       int* comp = (int*)malloc(sizeof(int)*(n+1));
+       for(i=0; i<n; i++)
+	       comp[i]=0;
+       double t1 = omp_get_wtime();
+       for(i=2; i<=m; i++)
+	       if(!comp[i]){
+		       count++;
+		       striker[nfac] = strike(comp,2*i,i,m);
+		       factor[nfac++] = i;
+	       }
 
-   t = omp_get_wtime() - t;
+       for(i=m+1; i<=n; i+=m){
+	       int lim = min(i+m-1,n);
+	       int j;
+	       for(j=0; j<nfac; j++)
+		       striker[j] = strike(comp,striker[j],factor[j],lim);
+	       for(j=i; j<=lim; j++)
+		       if(!comp[j])
+			       count++;
+       }
 
-   delete[] composite;
+       double t2 = omp_get_wtime() - t1;
+       printf("Type: Friendly  N: %d  Prime: %d  Time: %g\n",n,count,t2);  
+}       
 
-   return count;
+void parallel(int n){
+       int m = sqrt(n);
+       int i=0, count=0, nfac=0;
+       int striker[m], factor[m];
+       int* comp = (int*)malloc(sizeof(int)*(n+1));
+       for(i=0; i<n; i++)
+               comp[i]=0;
+       double t1 = omp_get_wtime();
+       omp_set_num_threads(8);
+	#pragma omp single
+       for(i=2; i<=m; i++)
+               if(!comp[i]){
+                       count++;
+                       striker[nfac] = strike(comp,2*i,i,m);
+                       factor[nfac++] = i;
+               }
+	#pragma omp parallel shared(striker, factor, comp) reduction(+:count) 
+       for(i=m+1; i<=n; i+=m){
+               int lim = min(i+m-1,n);
+               int j;
+               for(j=0; j<nfac; j++)
+                       striker[j] = strike(comp,striker[j],factor[j],lim);
+               for(j=i; j<=lim; j++)
+                       if(!comp[j])
+                               count++;
+       }
+
+       double t2 = omp_get_wtime() - t1;
+       printf("Type: Parallel  N: %d  Prime: %d  Time: %g\n",n,count,t2);
 }
 
-long CacheFriendlySieve( long n )
-{
-   long count = 0;
-   long m = (long)sqrt((double)n);
-   bool* composite = new bool[n+1];
-   memset( composite, 0, n );
-   long* factor = new long[m];
-   long* striker = new long[m];
-   long n_factor = 0;
-
-   t= omp_get_wtime();
-
-   for( long i=2; i<=m; ++i )
-      if( !composite[i] )
-      {
-         ++count;
-         striker[n_factor] = Strike( composite, 2*i, i, m );
-         factor[n_factor++] = i;
-      }
-
-   // Chops sieve into windows of size Å sqrt(n)
-   for( long window=m+1; window<=n; window+=m )
-   {
-      long limit = min(window+m-1,n);
-      for( long k=0; k<n_factor; ++k )
-         // Strike walks window of size sqrt(n) here.
-         striker[k] = Strike( composite, striker[k], factor[k],limit );
-      for( long i=window; i<=limit; ++i )
-         if( !composite[i] )
-            ++count;
-   }
-
-   t = omp_get_wtime() - t;
-
-   delete[] striker;
-   delete[] factor;
-   delete[] composite;
-
-   return count;
-}
-
-long ParallelSieve( long n, int numThreads)
-{
-   long count = 0;
-   long m = (long)sqrt((double)n);
-
-   long n_factor = 0;
-   long* factor = new long[m];
-
-   t= omp_get_wtime();
-
-   omp_set_num_threads(numThreads);
-#pragma omp parallel
-   {
-      bool* composite = new bool[m+1];
-      long* striker = new long[m];
-
-#pragma omp single
-      {
-         memset( composite, 0, m );
-         for( long i=2; i<=m; ++i )
-            if( !composite[i] )
-            {
-               ++count;
-               striker[n_factor] = Strike( composite, 2*i, i, m );
-               factor[n_factor++] = i;
-            }
-      }
-      long base = -1;
-
-      // Chops sieve into windows of size Å sqrt(n)
-#pragma omp for reduction(+:count)
-      for( long window=m+1; window<=n; window+=m )
-      {
-         memset(composite, 0, m);
-         if(base != window)
-         {
-            //Must compute stiker from scratch
-            base = window;
-            for(long k=0; k<n_factor; ++k)
-               striker[k] = (base+factor[k]-1)/factor[k] * factor[k] - base;
-         }
-         
-         long limit = min(window+m-1, n) - base;
-         for(long k=0; k<n_factor; ++k)
-            striker[k] = Strike(composite, striker[k], factor[k], limit) - m;
-
-         for(long i=0; i<=limit; ++i)
-            if(!composite[i])
-               ++count;
-            base += m;
-      }
-
-      delete[] striker;
-      delete[] composite;
-   }
-
-   t = omp_get_wtime() - t;
-
-   delete[] factor;
-   return count;
-}
-
-int main()
-{
-
-   long N;
-   cout<<"Enter the value of N: ";
-   cin>>N;
-
-
-   cout<<"CACHE UNFRIENDLY SEIVE"<<endl;
-   cout<< "Count = "<<CacheUnfriendlySieve(N)<<endl;
-   cout<< "Time = "<<t<<endl;
-
-   cout<<endl;
-
-   cout<<"CACHE FRIENDLY SEIVE"<<endl;
-   cout<< "Count = "<<CacheFriendlySieve(N)<<endl;
-   cout<< "Time = "<<t<<endl;
-
-   cout<<endl;
-
-   int numThreads;
-   cout<<"PARALLEL SEIVE"<<endl;
-   cout<<"Enter the number of threads: ";
-   cin>>numThreads;
-   cout<< "Count = "<<ParallelSieve(N, numThreads)<<endl;
-   cout<< "Time = "<<t<<endl;
+void main(){
+	int n=0;
+	for(n=1000000; n<=100000000; n*=10){
+		unfriend(n);
+		friend(n);
+		parallel(n);
+		printf("\n");
+	}
 }
